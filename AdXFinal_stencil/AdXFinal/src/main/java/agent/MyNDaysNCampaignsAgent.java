@@ -3,6 +3,7 @@ package agent;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -24,28 +25,62 @@ import adx.variants.ndaysgame.Tier1NDaysNCampaignsAgent;
 
 public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 	private static final String NAME = "Don Draper"; // TODO: enter a name. please remember to submit the Google form.
-	private Map<String,Integer> freqMap;
-	private Map<Campaign,Double> costMap = new HashMap<Campaign,Double> ();
+	private Map<MarketSegment,Integer> _freqMap;
+	Map<MarketSegment,List<MarketSegment>> _baseMap;
 	
-	public MyNDaysNCampaignsAgent() {
+	public MyNDaysNCampaignsAgent() throws AdXException {
 		// TODO: fill this in (if necessary)
-		freqMap = new HashMap<> ();
+		_freqMap = new HashMap<MarketSegment,Integer> ();
 		List<Integer> userFreqs = Arrays.asList(4956,5044,4589,5411,8012,1988,2353,2603,3631,1325,2236,2808,
 				4381,663,3816,773,4196,1215,1836,517,1795,808,1980,
 				256,2401,407);
 		int index = 0;
 		for (MarketSegment m: MarketSegment.values()) {
 			System.out.println(m.name());
-			freqMap.put(m.name(),userFreqs.get(index));
+			_freqMap.put(m,userFreqs.get(index));
 			index = index + 1;
 		}
+		List<MarketSegment> baseSegs = new ArrayList<MarketSegment>();
+		int counter = 0;
+		for (MarketSegment m: MarketSegment.values()) {
+			if (counter > 16) {
+				baseSegs.add(m);
+			}
+			counter += 1;
+		}
+		_baseMap = new HashMap<MarketSegment,List<MarketSegment>>();
+		for (MarketSegment m: MarketSegment.values()) {
+			List<MarketSegment> base = new ArrayList<>();
+			for (MarketSegment bs: baseSegs) {
+				if (MarketSegment.marketSegmentSubset(bs, m)){
+					base.add(bs);
+				}
+			}
+			_baseMap.put(m,base);
+		}
 	}
+	
 	
 	@Override
 	protected void onNewGame() {
 		// TODO: fill this in (if necessary)
-		costMap = new HashMap<Campaign,Double> ();
+		
 	}
+	
+	private double[] bidFunction(Campaign c,double reachFactor) {
+		double budget = c.getBudget();
+		int totReach = c.getReach();
+		int cumReach = super.getCumulativeReach(c);
+		//double cumCost = super.getCumulativeCost(c);
+		//double quality = super.getQualityScore();
+		double currReach = super.effectiveReach(cumReach, totReach);
+		double finReach = super.effectiveReach((int)reachFactor*totReach,totReach);
+		double limit = budget*(finReach - currReach);
+		double bid = limit/(reachFactor*totReach - cumReach);
+		bid = 0.05;
+		return new double[] {bid,limit};
+	}
+	
 	
 	@Override
 	protected Set<NDaysAdBidBundle> getAdBids() throws AdXException {
@@ -54,21 +89,63 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		Set<NDaysAdBidBundle> bundles = new HashSet<>();
 		
 		for (Campaign c : this.getActiveCampaigns()) {
-			HashSet<SimpleBidEntry> bidEntries = new HashSet<SimpleBidEntry>();
-			double cost = c.getReach()*0.05;
-			double bid = cost/c.getReach();
-			double limit = (1.1*c.getReach() - super.getCumulativeReach(c))*0.05; // limit for campaign and segment
-			limit = Math.min(limit,c.getBudget()- super.getCumulativeCost(c));
-			MarketSegment segment = c.getMarketSegment();
-			SimpleBidEntry bidEntry = new SimpleBidEntry(segment,bid,limit);
-			bidEntries.add(bidEntry);
+			double reachFactor = 1.1;
+			double[] bidArr = this.bidFunction(c,reachFactor);
+			double cbid = bidArr[0];
+			double limit = bidArr[1];
+			Set<SimpleBidEntry> bidEntries = this.userBidsHelper(c,cbid);
+			limit = Math.min(0.1*limit,c.getBudget() - super.getCumulativeCost(c));
+			//limit = c.getBudget() - super.getCumulativeCost(c);
 			NDaysAdBidBundle bundle = new NDaysAdBidBundle(c.getId(),limit, bidEntries);
 			bundles.add(bundle);
 		}
 		
 		return bundles;
 	}
-
+	
+	public Set<SimpleBidEntry> userBidsHelper(Campaign camp,double campbid) throws AdXException {
+		double seglimit = camp.getBudget() - super.getCumulativeCost(camp);
+		MarketSegment camp_seg = camp.getMarketSegment();
+		Set<SimpleBidEntry> bidEntries = new HashSet<SimpleBidEntry>(); 
+		List<MarketSegment> base_segs = new ArrayList<MarketSegment>();
+		for (MarketSegment bm: _baseMap.get(camp_seg)) {base_segs.add(bm);}
+		for (Campaign c: super.getActiveCampaigns()) {
+			if (c.getEndDay() < camp.getEndDay()){
+				for (MarketSegment bm: _baseMap.get(c.getMarketSegment())) {
+					if (base_segs.contains(bm)) {
+						//base_segs.remove(bm);
+					}
+				}
+			}	
+		}
+		for (MarketSegment bm: base_segs) {
+			SimpleBidEntry bidEntry = new SimpleBidEntry(bm,campbid,seglimit);
+			bidEntries.add(bidEntry);
+		}
+		
+		return bidEntries;
+	}
+	
+	public double campaignBidHelper(Campaign newC) throws AdXException {
+		MarketSegment newSegment = newC.getMarketSegment();
+		//List<MarketSegment> base_segs = _baseMap.get(newSegment);
+		int count = 0;
+		for (Campaign c: super.getActiveCampaigns()) {
+			boolean subset = MarketSegment.marketSegmentSubset(c.getMarketSegment(),newSegment);
+			if (subset) {
+				count += 1;
+			}	
+		}
+		// accept/reject campaign based on the bids.
+		double cbid = 0.10;
+		if (count > 1 ) {
+			cbid = cbid/2;
+		} 
+		
+		return newC.getReach()*cbid;
+	}
+	
+	
 	@Override
 	protected Map<Campaign, Double> getCampaignBids(Set<Campaign> campaignsForAuction) throws AdXException {
 		// TODO: fill this in
@@ -77,14 +154,8 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		
 		for (Campaign c : campaignsForAuction) {
 			
-			int reach = c.getReach();
-		
-			double est_cost = reach*0.05; // estimated cost
-			int est_reach = (int) (0.8*reach); // estimated reach
-			double eff_reach = super.effectiveReach(est_reach, reach); // effective reach
-			
-			double bid = est_cost/eff_reach;
-			bids.put(c, super.clipCampaignBid(c, bid));
+			double bid = this.campaignBidHelper(c);
+			bids.put(c, super.clipCampaignBid(c, 0));
 		}
 		
 		return bids;
@@ -119,5 +190,30 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 			AgentStartupUtil.startOnline(new MyNDaysNCampaignsAgent(), args, NAME);
 		}
 	}
+	
+	
+
+	/**
+	protected Set<NDaysAdBidBundle> getAdBidsOld() throws AdXException {
+		// TODO: fill this in
+		
+		Set<NDaysAdBidBundle> bundles = new HashSet<>();
+		
+		for (Campaign c : this.getActiveCampaigns()) {
+			HashSet<SimpleBidEntry> bidEntries = new HashSet<SimpleBidEntry>();
+			double cost = c.getReach()*0.05;
+			double bid = cost/c.getReach();
+			double limit = (1.1*c.getReach() - super.getCumulativeReach(c))*0.05; // limit for campaign and segment
+			limit = Math.min(limit,c.getBudget()- super.getCumulativeCost(c));
+			MarketSegment segment = c.getMarketSegment();
+			SimpleBidEntry bidEntry = new SimpleBidEntry(segment,bid,limit);
+			bidEntries.add(bidEntry);
+			NDaysAdBidBundle bundle = new NDaysAdBidBundle(c.getId(),limit, bidEntries);
+			bundles.add(bundle);
+		}
+		
+		return bundles;
+	}
+	*/
 
 }
