@@ -26,24 +26,29 @@ import adx.variants.ndaysgame.Tier1NDaysNCampaignsAgent;
 public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 	private static final String NAME = "Don Draper"; // TODO: enter a name. please remember to submit the Google form.
 	private Map<MarketSegment,Integer> _freqMap;
-	Map<MarketSegment,List<MarketSegment>> _baseMap;
+	private Map<MarketSegment,List<MarketSegment>> _baseMap;
+	private List<Campaign> _lostCamps;
 	
 	public MyNDaysNCampaignsAgent() throws AdXException {
 		// TODO: fill this in (if necessary)
+		
+		_lostCamps = new ArrayList<Campaign>();
+		
 		_freqMap = new HashMap<MarketSegment,Integer> ();
 		List<Integer> userFreqs = Arrays.asList(4956,5044,4589,5411,8012,1988,2353,2603,3631,1325,2236,2808,
 				4381,663,3816,773,4196,1215,1836,517,1795,808,1980,
 				256,2401,407);
 		int index = 0;
 		for (MarketSegment m: MarketSegment.values()) {
-			System.out.println(m.name());
+			//System.out.println(m.name());
 			_freqMap.put(m,userFreqs.get(index));
 			index = index + 1;
 		}
 		List<MarketSegment> baseSegs = new ArrayList<MarketSegment>();
 		int counter = 0;
 		for (MarketSegment m: MarketSegment.values()) {
-			if (counter > 16) {
+			if (counter > 17) {
+				//System.out.println(m.name());
 				baseSegs.add(m);
 			}
 			counter += 1;
@@ -52,7 +57,8 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		for (MarketSegment m: MarketSegment.values()) {
 			List<MarketSegment> base = new ArrayList<>();
 			for (MarketSegment bs: baseSegs) {
-				if (MarketSegment.marketSegmentSubset(bs, m)){
+				if (MarketSegment.marketSegmentSubset(m, bs)){
+					//System.out.println(bs.name());
 					base.add(bs);
 				}
 			}
@@ -64,7 +70,7 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 	@Override
 	protected void onNewGame() {
 		// TODO: fill this in (if necessary)
-		
+		_lostCamps = new ArrayList<Campaign>();
 	}
 	
 	private double[] bidFunction(Campaign c,double reachFactor) {
@@ -76,31 +82,9 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		double currReach = super.effectiveReach(cumReach, totReach);
 		double finReach = super.effectiveReach((int)reachFactor*totReach,totReach);
 		double limit = budget*(finReach - currReach);
+		//limit = 0*(reachFactor*totReach - cumReach) + 0.01;
 		double bid = limit/(reachFactor*totReach - cumReach);
-		bid = 0.05;
 		return new double[] {bid,limit};
-	}
-	
-	
-	@Override
-	protected Set<NDaysAdBidBundle> getAdBids() throws AdXException {
-		// TODO: fill this in
-		
-		Set<NDaysAdBidBundle> bundles = new HashSet<>();
-		
-		for (Campaign c : this.getActiveCampaigns()) {
-			double reachFactor = 1.1;
-			double[] bidArr = this.bidFunction(c,reachFactor);
-			double cbid = bidArr[0];
-			double limit = bidArr[1];
-			Set<SimpleBidEntry> bidEntries = this.userBidsHelper(c,cbid);
-			limit = Math.min(0.1*limit,c.getBudget() - super.getCumulativeCost(c));
-			//limit = c.getBudget() - super.getCumulativeCost(c);
-			NDaysAdBidBundle bundle = new NDaysAdBidBundle(c.getId(),limit, bidEntries);
-			bundles.add(bundle);
-		}
-		
-		return bundles;
 	}
 	
 	public Set<SimpleBidEntry> userBidsHelper(Campaign camp,double campbid) throws AdXException {
@@ -113,7 +97,7 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 			if (c.getEndDay() < camp.getEndDay()){
 				for (MarketSegment bm: _baseMap.get(c.getMarketSegment())) {
 					if (base_segs.contains(bm)) {
-						//base_segs.remove(bm);
+						base_segs.remove(bm);
 					}
 				}
 			}	
@@ -126,9 +110,33 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		return bidEntries;
 	}
 	
+	
+	@Override
+	protected Set<NDaysAdBidBundle> getAdBids() throws AdXException {
+		// TODO: fill this in
+		
+		Set<NDaysAdBidBundle> bundles = new HashSet<>();
+		
+		for (Campaign c : this.getActiveCampaigns()) {
+			double reachFactor = 1.2;
+			double[] bidArr = this.bidFunction(c,reachFactor);
+			double cbid = bidArr[0];
+			double limit = bidArr[1];
+			Set<SimpleBidEntry> bidEntries = this.userBidsHelper(c,cbid);
+			limit = Math.min(limit,c.getBudget() - super.getCumulativeCost(c));
+			NDaysAdBidBundle bundle = new NDaysAdBidBundle(c.getId(),limit, bidEntries);
+			bundles.add(bundle);
+		}
+		
+		return bundles;
+	}
+	
+	
+	
 	public double campaignBidHelper(Campaign newC) throws AdXException {
-		MarketSegment newSegment = newC.getMarketSegment();
 		//List<MarketSegment> base_segs = _baseMap.get(newSegment);
+		/**
+		MarketSegment newSegment = newC.getMarketSegment();
 		int count = 0;
 		for (Campaign c: super.getActiveCampaigns()) {
 			boolean subset = MarketSegment.marketSegmentSubset(c.getMarketSegment(),newSegment);
@@ -136,12 +144,12 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 				count += 1;
 			}	
 		}
-		// accept/reject campaign based on the bids.
-		double cbid = 0.10;
+		// accept/reject campaign based on the count. 
 		if (count > 1 ) {
 			cbid = cbid/2;
 		} 
-		
+		*/
+		double cbid = 0.10;
 		return newC.getReach()*cbid;
 	}
 	
@@ -154,8 +162,11 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		
 		for (Campaign c : campaignsForAuction) {
 			
+			_lostCamps.add(c);
+			
 			double bid = this.campaignBidHelper(c);
-			bids.put(c, super.clipCampaignBid(c, 0));
+			
+			bids.put(c, super.clipCampaignBid(c, bid));
 		}
 		
 		return bids;
@@ -169,6 +180,8 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		// a) It's much faster than the online test; don't worry if there's no delays.
 		// b) You should still run the test script mentioned in the handout to make sure
 		// your agent works online.
+		//new MyNDaysNCampaignsAgent();
+		
 		if (args.length == 0) {
 			Map<String, AgentLogic> test_agents = new ImmutableMap.Builder<String, AgentLogic>()
 					.put("me", new MyNDaysNCampaignsAgent())
@@ -189,6 +202,7 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 			// Don't change this.
 			AgentStartupUtil.startOnline(new MyNDaysNCampaignsAgent(), args, NAME);
 		}
+		
 	}
 	
 	
