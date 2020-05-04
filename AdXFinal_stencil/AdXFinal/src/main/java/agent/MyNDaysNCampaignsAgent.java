@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -27,27 +28,42 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 	private static final String NAME = "Don Draper"; // TODO: enter a name. please remember to submit the Google form.
 	//private static final double RFACTOR = 1.0;
 	private Map<MarketSegment,List<MarketSegment>> _baseMap;
-	//private Map<MarketSegment,Integer> _freqMap;
+	private List<MarketSegment> _baseSegs;
+	private Map<MarketSegment,Integer> _freqMap;
 	//private List<Campaign> _lostCamps;
 	
 	public MyNDaysNCampaignsAgent() throws AdXException {
 		// TODO: fill this in (if necessary)
 		
 		//_lostCamps = new ArrayList<Campaign>();
+		this.buildBaseSegments();
+		this.buildFreqMap();
+		Comparator<MarketSegment> freqComp = new Comparator<MarketSegment>() {
+			public int compare(MarketSegment m1,MarketSegment m2) {
+				if (_freqMap.get(m1) > _freqMap.get(m2)) {
+					return -1;
+				}
+				return 1;
+			}
+		};
+		_baseSegs.sort(freqComp);
 		
-		List<MarketSegment> baseSegs = new ArrayList<MarketSegment>();
+	}
+	
+	private void buildBaseSegments() throws AdXException {
+		_baseSegs = new ArrayList<MarketSegment>();
 		int counter = 0;
 		for (MarketSegment m: MarketSegment.values()) {
 			if (counter > 17) {
 				//System.out.println(m.name());
-				baseSegs.add(m);
+				_baseSegs.add(m);
 			}
 			counter += 1;
 		}
 		_baseMap = new HashMap<MarketSegment,List<MarketSegment>>();
 		for (MarketSegment m: MarketSegment.values()) {
 			List<MarketSegment> base = new ArrayList<>();
-			for (MarketSegment bs: baseSegs) {
+			for (MarketSegment bs: _baseSegs) {
 				if (MarketSegment.marketSegmentSubset(m, bs)){
 					//System.out.println(bs.name());
 					base.add(bs);
@@ -55,25 +71,21 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 			}
 			_baseMap.put(m,base);
 		}
-		//_freqMap = this.getFreqMap();
 	}
 	
-	/**
-	private Map<MarketSegment,Integer> getFreqMap(){
-		HashMap<MarketSegment, Integer> freqMap = new HashMap<MarketSegment,Integer> ();
+	
+	private void buildFreqMap(){
+		_freqMap = new HashMap<MarketSegment,Integer> ();
 		List<Integer> userFreqs = Arrays.asList(4956,5044,4589,5411,8012,1988,2353,2603,3631,1325,2236,2808,
 				4381,663,3816,773,4196,1215,1836,517,1795,808,1980,
 				256,2401,407);
 		int index = 0;
 		for (MarketSegment m: MarketSegment.values()) {
-			System.out.println(m.name().concat(Integer.toString(userFreqs.get(index))));
-			freqMap.put(m,userFreqs.get(index));
+			//System.out.println(m.name().concat(Integer.toString(userFreqs.get(index))));
+			_freqMap.put(m,userFreqs.get(index));
 			index = index + 1;
 		}
-		return freqMap;
 	}
-	*/
-	
 	
 	@Override
 	protected void onNewGame() {
@@ -101,37 +113,109 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		return new double[] {bid,limit};
 	}
 	
-	/**
-	private double[] getSegmentBid(Campaign camp,MarketSegment bm) {
-		double[] bidArr = this.bidFunction(camp);
-		int endsBefore = 0;
-		int endsAfter = 0;
-		for (Campaign c: _lostCamps) {
-			List<MarketSegment> cSegs = _baseMap.get(c.getMarketSegment());
-			if (cSegs.contains(bm)) {
-				if (c.getEndDay() < camp.getEndDay()) {
-					endsBefore += 1;
-				} else if (c.getEndDay() >= camp.getEndDay()) {
-					endsAfter += 1;
-				}
-			}
-		}
-		if (endsBefore  == 0 && endsAfter == 0) {
-			
-		}
-		
-		return bidArr;
-	}
-	*/
-	
-	
 	public double effReach(Campaign camp) {
 		int cumReach = super.getCumulativeReach(camp);
 		return super.effectiveReach(cumReach,camp.getReach());
 	}
 	
+	public Map<Campaign,Double> getEffList() {
+		Map<Campaign,Double> map = new HashMap<Campaign,Double>();
+		for (Campaign c : this.getActiveCampaigns()) {
+			map.put(c, this.effReach(c));
+		}
+		return map;
+	}
 	
 	
+	public Set<NDaysAdBidBundle> check() throws AdXException {
+		
+		
+		// Part 1
+		
+		
+		Set<NDaysAdBidBundle> bundles = new HashSet<NDaysAdBidBundle>();
+		
+		
+		Map<Campaign,List<MarketSegment>> cSegments = new HashMap<Campaign,List<MarketSegment>>();
+		Map<Campaign,Integer> count = new HashMap<Campaign,Integer>();
+		List<MarketSegment> others = new ArrayList<MarketSegment>();
+		for (Campaign c : this.getActiveCampaigns()) {
+			count.put(c,0);
+			cSegments.put(c,new ArrayList<MarketSegment>());
+		}
+			
+	
+		for (MarketSegment bm: _baseSegs) {
+			Map<Campaign,Double> effReach = this.getEffList();
+			Comparator<Campaign> comp = new Comparator<Campaign>() {
+				public int compare(Campaign c1,Campaign c2) {
+					double score = 0;
+					score = score - 100*(count.get(c1)-count.get(c2)) ;
+					score = score - 10*(effReach.get(c1) - effReach.get(c2));
+					score = score - 100*(c1.getEndDay() - c2.getEndDay());
+					if (score > 0) {
+						return -1;
+					}
+					return 1;
+				}
+			};
+			List<Campaign> camps = new ArrayList<Campaign>();
+			
+			for (Campaign c : this.getActiveCampaigns()) {
+				List<MarketSegment> bSegs = _baseMap.get(c.getMarketSegment());
+				if (bSegs.contains(bm)) {
+					camps.add(c);
+				}
+			}
+			
+			if (camps.size() > 0) {
+				camps.sort(comp);
+				Campaign selected = camps.get(0);
+				count.put(selected,count.get(selected)+1);
+				cSegments.containsKey(selected);
+				cSegments.get(selected).add(bm); // is this added to map value as well?
+			} else {
+				others.add(bm);
+			}
+		}
+		
+		
+		// Part 2
+		
+		
+		int index = 0;
+		for (Campaign camp: this.getActiveCampaigns()) {
+			double reachFactor = 1.4;
+			Set<SimpleBidEntry> bidEntries = new HashSet<SimpleBidEntry>();
+			double seglimit = camp.getBudget() - super.getCumulativeCost(camp);
+			double[] bidArr = this.bidFunction(camp,reachFactor);
+			double cbid = bidArr[0];
+			double limit = bidArr[1];
+			limit = Math.min(limit,seglimit);
+			List<MarketSegment> base_segs = cSegments.get(camp);
+			//List<MarketSegment> base_segs = _baseMap.get(camp.getMarketSegment());
+			for (MarketSegment bm: base_segs) {
+				SimpleBidEntry bidEntry = new SimpleBidEntry(bm,cbid,seglimit);
+				bidEntries.add(bidEntry);
+			}
+			if (index == 0) {
+				index += 1;
+				//for (MarketSegment bm:others) {
+					//SimpleBidEntry bidEntry = new SimpleBidEntry(bm,0,1);
+					//bidEntries.add(bidEntry);
+				//}
+			}
+			NDaysAdBidBundle bundle = new NDaysAdBidBundle(camp.getId(),limit, bidEntries);
+			bundles.add(bundle);
+		}
+		
+		return bundles;	
+		
+	}
+	
+	
+	
+	/**
 	public Set<SimpleBidEntry> userBidsHelper(Campaign camp,double campbid) throws AdXException {
 		MarketSegment camp_seg = camp.getMarketSegment();
 		double seglimit = camp.getBudget() - super.getCumulativeCost(camp);
@@ -159,8 +243,25 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		
 		return bidEntries;
 	}
+	*/
+	
+	@Override
+	protected Set<NDaysAdBidBundle> getAdBids() throws AdXException {
+		// TODO: fill this in
+		
+		//Set<NDaysAdBidBundle> bundles = new HashSet<>();
+		/**
+		for (Campaign c : this.getActiveCampaigns()) {
+			if (_lostCamps.contains(c)){
+				_lostCamps.remove(c);
+			}
+		}
+		*/
+		return this.check();
+	}
 	
 	
+	/**
 	@Override
 	protected Set<NDaysAdBidBundle> getAdBids() throws AdXException {
 		// TODO: fill this in
@@ -173,6 +274,7 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 			}
 		}
 		*/
+		/**
 		double reachFactor = 1.4;
 		
 		for (Campaign c : this.getActiveCampaigns()) {
@@ -188,6 +290,8 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		
 		return bundles;
 	}
+	*/
+	
 	
 	
 	
@@ -224,12 +328,11 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 		//new MyNDaysNCampaignsAgent();
 		
 		MyNDaysNCampaignsAgent agent = new MyNDaysNCampaignsAgent();
-		MyNDaysNCampaignsAgent agent2 = new MyNDaysNCampaignsAgent();
+		//MyNDaysNCampaignsAgent agent3 = new MyNDaysNCampaignsAgent();
 		if (args.length == 0) {
 			Map<String, AgentLogic> test_agents = new ImmutableMap.Builder<String, AgentLogic>()
-					.put("me", agent)
-					.put("me2", agent2)
-					//.put("opponent_1", new Tier1NDaysNCampaignsAgent())
+					.put("agent", agent)
+					.put("opponent_1", new Tier1NDaysNCampaignsAgent())
 					.put("opponent_2", new Tier1NDaysNCampaignsAgent())
 					.put("opponent_3", new Tier1NDaysNCampaignsAgent())
 					.put("opponent_4", new Tier1NDaysNCampaignsAgent())
@@ -247,7 +350,7 @@ public class MyNDaysNCampaignsAgent extends NDaysNCampaignsAgent {
 			AgentStartupUtil.startOnline(new MyNDaysNCampaignsAgent(), args, NAME);
 		}
 		//System.out.println("Quality Score");
-		//System.out.println(agent.getQualityScore());
+		
 		
 		
 	}
